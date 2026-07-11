@@ -1,0 +1,158 @@
+name: 📦 Download & Upload AI Models
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: 'Modèles à traiter'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - llm
+          - emotion
+          - whisper
+
+# Permissions pour uploader des release assets
+permissions:
+  contents: write
+
+jobs:
+  # ── Llama-3.2-1B-Instruct (q4 ONNX) ─────────────────────────────────────
+  upload-llm:
+    name: "LLM — Llama-3.2-1B-Instruct"
+    runs-on: ubuntu-latest
+    if: ${{ inputs.models == 'all' || inputs.models == 'llm' }}
+    steps:
+      - name: Download Llama-3.2-1B-Instruct from HuggingFace
+        run: |
+          BASE="https://huggingface.co/onnx-community/Llama-3.2-1B-Instruct/resolve/main"
+          mkdir -p llm
+
+          echo "⬇️  model_q4.onnx (~450 MB)…"
+          # Essaye q4 d'abord, fallback sur quantized (int8)
+          wget --tries=5 --retry-connrefused --waitretry=10 \
+               --timeout=120 --progress=bar:force \
+               "$BASE/onnx/model_q4.onnx" -O llm/llm-model_q4.onnx \
+          || wget --tries=5 --retry-connrefused --waitretry=10 \
+                  --timeout=120 --progress=bar:force \
+                  "$BASE/onnx/model_quantized.onnx" -O llm/llm-model_q4.onnx
+
+          echo "⬇️  Fichiers de configuration…"
+          wget -q "$BASE/tokenizer.json"          -O llm/llm-tokenizer.json
+          wget -q "$BASE/tokenizer_config.json"   -O llm/llm-tokenizer_config.json
+          wget -q "$BASE/special_tokens_map.json" -O llm/llm-special_tokens_map.json
+          wget -q "$BASE/config.json"             -O llm/llm-config.json
+          wget -q "$BASE/generation_config.json"  -O llm/llm-generation_config.json
+
+          echo "✅ LLM téléchargé — taille:"
+          du -sh llm/*
+
+      - name: Upload LLM assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ai-models-v1 \
+            llm/llm-model_q4.onnx \
+            llm/llm-tokenizer.json \
+            llm/llm-tokenizer_config.json \
+            llm/llm-special_tokens_map.json \
+            llm/llm-config.json \
+            llm/llm-generation_config.json \
+            --repo ${{ github.repository }} \
+            --clobber
+          echo "✅ LLM uploadé dans le release ai-models-v1"
+
+  # ── CamemBERT Emotions FR ─────────────────────────────────────────────────
+  upload-emotion:
+    name: "Emotion — CamemBERT FR"
+    runs-on: ubuntu-latest
+    if: ${{ inputs.models == 'all' || inputs.models == 'emotion' }}
+    steps:
+      - name: Download CamemBERT emotion model
+        run: |
+          # Source : release ai-models-v1 du repo youme-intelligente
+          OLD_BASE="https://github.com/l3ryx9/youme-intelligente/releases/download/ai-models-v1"
+          mkdir -p emotion
+
+          echo "⬇️  emotion-fr-model.onnx (~111 MB)…"
+          wget --tries=5 --retry-connrefused --waitretry=10 \
+               --timeout=120 --progress=bar:force \
+               "$OLD_BASE/emotion-fr-model.onnx" -O emotion/emotion-model.onnx
+
+          echo "⬇️  Fichiers de configuration…"
+          wget -q "$OLD_BASE/emotion-fr-tokenizer.json"          -O emotion/emotion-tokenizer.json
+          wget -q "$OLD_BASE/emotion-fr-tokenizer_config.json"   -O emotion/emotion-tokenizer_config.json
+          wget -q "$OLD_BASE/emotion-fr-special_tokens_map.json" -O emotion/emotion-special_tokens_map.json
+          wget -q "$OLD_BASE/emotion-fr-config.json"             -O emotion/emotion-config.json
+
+          echo "✅ Emotion téléchargé — taille:"
+          du -sh emotion/*
+
+      - name: Upload Emotion assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ai-models-v1 \
+            emotion/emotion-model.onnx \
+            emotion/emotion-tokenizer.json \
+            emotion/emotion-tokenizer_config.json \
+            emotion/emotion-special_tokens_map.json \
+            emotion/emotion-config.json \
+            --repo ${{ github.repository }} \
+            --clobber
+          echo "✅ Emotion uploadé dans le release ai-models-v1"
+
+  # ── Whisper Small ─────────────────────────────────────────────────────────
+  upload-whisper:
+    name: "Whisper — Small multilingual"
+    runs-on: ubuntu-latest
+    if: ${{ inputs.models == 'all' || inputs.models == 'whisper' }}
+    steps:
+      - name: Download Whisper Small from HuggingFace
+        run: |
+          BASE="https://huggingface.co/onnx-community/whisper-small/resolve/main"
+          mkdir -p whisper
+
+          echo "⬇️  encoder_model_quantized.onnx (~85 MB)…"
+          wget --tries=5 --retry-connrefused --waitretry=10 \
+               --timeout=120 --progress=bar:force \
+               "$BASE/onnx/encoder_model_quantized.onnx" -O whisper/whisper-encoder.onnx
+
+          echo "⬇️  decoder_model_merged_quantized.onnx (~190 MB)…"
+          wget --tries=5 --retry-connrefused --waitretry=10 \
+               --timeout=120 --progress=bar:force \
+               "$BASE/onnx/decoder_model_merged_quantized.onnx" -O whisper/whisper-decoder.onnx
+
+          echo "⬇️  Fichiers de configuration…"
+          wget -q "$BASE/tokenizer.json"          -O whisper/whisper-tokenizer.json
+          wget -q "$BASE/tokenizer_config.json"   -O whisper/whisper-tokenizer_config.json
+          wget -q "$BASE/config.json"             -O whisper/whisper-config.json
+          wget -q "$BASE/generation_config.json"  -O whisper/whisper-generation_config.json
+          wget -q "$BASE/preprocessor_config.json" -O whisper/whisper-preprocessor_config.json
+          wget -q "$BASE/special_tokens_map.json" -O whisper/whisper-special_tokens_map.json
+          wget -q "$BASE/normalizer.json"         -O whisper/whisper-normalizer.json
+          wget -q "$BASE/added_tokens.json"       -O whisper/whisper-added_tokens.json
+
+          echo "✅ Whisper téléchargé — taille:"
+          du -sh whisper/*
+
+      - name: Upload Whisper assets to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ai-models-v1 \
+            whisper/whisper-encoder.onnx \
+            whisper/whisper-decoder.onnx \
+            whisper/whisper-tokenizer.json \
+            whisper/whisper-tokenizer_config.json \
+            whisper/whisper-config.json \
+            whisper/whisper-generation_config.json \
+            whisper/whisper-preprocessor_config.json \
+            whisper/whisper-special_tokens_map.json \
+            whisper/whisper-normalizer.json \
+            whisper/whisper-added_tokens.json \
+            --repo ${{ github.repository }} \
+            --clobber
+          echo "✅ Whisper uploadé dans le release ai-models-v1"
