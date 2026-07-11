@@ -65,29 +65,79 @@ jobs:
           echo "✅ LLM uploadé dans le release ai-models-v1"
 
   # ── CamemBERT Emotions FR ─────────────────────────────────────────────────
+  # NOTE : contrairement au LLM et à Whisper, il n'existe AUCUNE version ONNX
+  # déjà convertie de ce modèle sur HuggingFace. On la convertit donc
+  # nous-mêmes ici (via 🤗 Optimum), à partir du modèle PyTorch d'origine
+  # astrosbd/french_emotion_camembert, puis on la quantifie en int8 pour
+  # réduire sa taille (~440 Mo → ~110 Mo), avant de l'uploader.
   upload-emotion:
     name: "Emotion — CamemBERT FR"
     runs-on: ubuntu-latest
     if: ${{ inputs.models == 'all' || inputs.models == 'emotion' }}
     steps:
-      - name: Download CamemBERT emotion model
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install conversion tools
         run: |
-          # Source : release ai-models-v1 du repo youme-intelligente
-          OLD_BASE="https://github.com/l3ryx9/youme-intelligente/releases/download/ai-models-v1"
+          pip install --quiet --upgrade pip
+          pip install --quiet "transformers>=4.41" "optimum[exporters,onnxruntime]" sentencepiece protobuf onnx onnxruntime
+
+      - name: Export CamemBERT emotion model to ONNX
+        run: |
+          set -e
+          SRC="astrosbd/french_emotion_camembert"
+
+          echo "⬇️  Export ONNX depuis $SRC (transformers + optimum)…"
+          optimum-cli export onnx \
+            --model "$SRC" \
+            --task text-classification \
+            emotion_onnx
+
+          echo "🧾 Contenu exporté :"
+          ls -la emotion_onnx
+
+          echo "🔧 S'assure qu'un tokenizer 'fast' (tokenizer.json) est bien présent…"
+          python3 - <<'PY'
+          from transformers import AutoTokenizer
+          tok = AutoTokenizer.from_pretrained("astrosbd/french_emotion_camembert", use_fast=True)
+          tok.save_pretrained("emotion_onnx")
+          print("tokenizer.json écrit :", tok.is_fast)
+          PY
+
+      - name: Quantize model to int8
+        run: |
+          set -e
+          python3 - <<'PY'
+          from optimum.onnxruntime import ORTQuantizer
+          from optimum.onnxruntime.configuration import AutoQuantizationConfig
+
+          quantizer = ORTQuantizer.from_pretrained("emotion_onnx", file_name="model.onnx")
+          qconfig = AutoQuantizationConfig.avx2(is_static=False, per_channel=False)
+          quantizer.quantize(save_dir="emotion_onnx_quantized", quantization_config=qconfig)
+          PY
+
+          echo "🧾 Contenu quantifié :"
+          ls -la emotion_onnx_quantized
+
+      - name: Prepare release assets
+        run: |
+          set -e
           mkdir -p emotion
 
-          echo "⬇️  emotion-fr-model.onnx (~111 MB)…"
-          wget --tries=5 --retry-connrefused --waitretry=10 \
-               --timeout=120 --progress=bar:force \
-               "$OLD_BASE/emotion-fr-model.onnx" -O emotion/emotion-model.onnx
+          # Modèle quantifié (nom attendu par l'app : emotion-model.onnx)
+          cp emotion_onnx_quantized/model_quantized.onnx emotion/emotion-model.onnx
 
-          echo "⬇️  Fichiers de configuration…"
-          wget -q "$OLD_BASE/emotion-fr-tokenizer.json"          -O emotion/emotion-tokenizer.json
-          wget -q "$OLD_BASE/emotion-fr-tokenizer_config.json"   -O emotion/emotion-tokenizer_config.json
-          wget -q "$OLD_BASE/emotion-fr-special_tokens_map.json" -O emotion/emotion-special_tokens_map.json
-          wget -q "$OLD_BASE/emotion-fr-config.json"             -O emotion/emotion-config.json
+          # Fichiers de tokenizer/config produits par l'export (pris dans
+          # emotion_onnx, qui contient le tokenizer "fast" généré ci-dessus)
+          cp emotion_onnx/tokenizer.json             emotion/emotion-tokenizer.json
+          cp emotion_onnx/tokenizer_config.json      emotion/emotion-tokenizer_config.json
+          cp emotion_onnx/special_tokens_map.json    emotion/emotion-special_tokens_map.json
+          cp emotion_onnx/config.json                emotion/emotion-config.json
 
-          echo "✅ Emotion téléchargé — taille:"
+          echo "✅ Assets prêts — taille :"
           du -sh emotion/*
 
       - name: Upload Emotion assets to release
