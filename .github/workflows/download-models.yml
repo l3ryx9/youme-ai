@@ -19,25 +19,30 @@ permissions:
   contents: write
 
 jobs:
-  # ── Llama-3.2-1B-Instruct (q4 ONNX) ─────────────────────────────────────
+  # ── Qwen2.5-1.5B-Instruct (q4f16 ONNX) ──────────────────────────────────
+  # FIX : remplace Llama-3.2-1B-Instruct. Ce job téléchargeait le graphe ONNX
+  # (llm-model_q4.onnx, ~149 Ko) mais jamais son fichier de poids externe
+  # model_q4.onnx_data (~1.69 Go) — l'app tentait donc de charger un modèle
+  # tronqué. La quantification q4f16 de Qwen2.5-1.5B-Instruct est un fichier
+  # .onnx unique et autonome (pas de .onnx_data externe), donc ce bug de
+  # classe entière ne peut plus se reproduire. C'est aussi l'architecture
+  # que LLMService.ts attend réellement côté app (num_hidden_layers=28,
+  # num_key_value_heads=2, head_dim=128).
   upload-llm:
-    name: "LLM — Llama-3.2-1B-Instruct"
+    name: "LLM — Qwen2.5-1.5B-Instruct (q4f16)"
     runs-on: ubuntu-latest
     if: ${{ inputs.models == 'all' || inputs.models == 'llm' }}
     steps:
-      - name: Download Llama-3.2-1B-Instruct from HuggingFace
+      - name: Download Qwen2.5-1.5B-Instruct (q4f16) from HuggingFace
         run: |
-          BASE="https://huggingface.co/onnx-community/Llama-3.2-1B-Instruct/resolve/main"
+          set -e
+          BASE="https://huggingface.co/onnx-community/Qwen2.5-1.5B-Instruct/resolve/main"
           mkdir -p llm
 
-          echo "⬇️  model_q4.onnx (~450 MB)…"
-          # Essaye q4 d'abord, fallback sur quantized (int8)
+          echo "⬇️  model_q4f16.onnx (~1.22 Go, fichier unique — pas de .onnx_data)…"
           wget --tries=5 --retry-connrefused --waitretry=10 \
                --timeout=120 --progress=bar:force \
-               "$BASE/onnx/model_q4.onnx" -O llm/llm-model_q4.onnx \
-          || wget --tries=5 --retry-connrefused --waitretry=10 \
-                  --timeout=120 --progress=bar:force \
-                  "$BASE/onnx/model_quantized.onnx" -O llm/llm-model_q4.onnx
+               "$BASE/onnx/model_q4f16.onnx" -O llm/llm-model_q4f16.onnx
 
           echo "⬇️  Fichiers de configuration…"
           wget -q "$BASE/tokenizer.json"          -O llm/llm-tokenizer.json
@@ -45,6 +50,14 @@ jobs:
           wget -q "$BASE/special_tokens_map.json" -O llm/llm-special_tokens_map.json
           wget -q "$BASE/config.json"             -O llm/llm-config.json
           wget -q "$BASE/generation_config.json"  -O llm/llm-generation_config.json
+
+          echo "🔎 Vérifie qu'aucun fichier n'est un HTML d'erreur déguisé…"
+          for f in llm/*; do
+            if head -c 100 "$f" | grep -qi '<html'; then
+              echo "❌ $f ressemble à une page d'erreur HTML, pas au fichier attendu" >&2
+              exit 1
+            fi
+          done
 
           echo "✅ LLM téléchargé — taille:"
           du -sh llm/*
@@ -54,7 +67,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload ai-models-v1 \
-            llm/llm-model_q4.onnx \
+            llm/llm-model_q4f16.onnx \
             llm/llm-tokenizer.json \
             llm/llm-tokenizer_config.json \
             llm/llm-special_tokens_map.json \
@@ -63,6 +76,10 @@ jobs:
             --repo ${{ github.repository }} \
             --clobber
           echo "✅ LLM uploadé dans le release ai-models-v1"
+
+          # Nettoyage des anciens assets Llama-3.2 (incomplets/obsolètes) pour
+          # ne pas laisser un llm-model_q4.onnx cassé traîner dans la release.
+          gh release delete-asset ai-models-v1 llm-model_q4.onnx --repo ${{ github.repository }} --yes || true
 
   # ── CamemBERT Emotions FR ─────────────────────────────────────────────────
   # NOTE : contrairement au LLM et à Whisper, il n'existe AUCUNE version ONNX
