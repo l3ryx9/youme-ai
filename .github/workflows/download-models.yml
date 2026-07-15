@@ -77,9 +77,14 @@ jobs:
             --clobber
           echo "✅ LLM uploadé dans le release ai-models-v1"
 
-          # Nettoyage des anciens assets Llama-3.2 (incomplets/obsolètes) pour
-          # ne pas laisser un llm-model_q4.onnx cassé traîner dans la release.
+          # Nettoyage des anciens assets obsolètes/incomplets pour ne pas les
+          # laisser traîner dans la release :
+          #  - llm-model_q4.onnx        : ancien Llama-3.2 (incomplet, sans poids)
+          #  - llm-phi4-model_q4.onnx*  : tentative encore antérieure (Phi-4-mini),
+          #                               jamais référencée par le code de l'app
           gh release delete-asset ai-models-v1 llm-model_q4.onnx --repo ${{ github.repository }} --yes || true
+          gh release delete-asset ai-models-v1 llm-phi4-model_q4.onnx --repo ${{ github.repository }} --yes || true
+          gh release delete-asset ai-models-v1 llm-phi4-model_q4.onnx_data --repo ${{ github.repository }} --yes || true
 
   # ── CamemBERT Emotions FR ─────────────────────────────────────────────────
   # NOTE : contrairement au LLM et à Whisper, il n'existe AUCUNE version ONNX
@@ -182,10 +187,10 @@ jobs:
           BASE="https://huggingface.co/onnx-community/whisper-small/resolve/main"
           mkdir -p whisper
 
-          echo "⬇️  encoder_model_quantized.onnx (~85 MB)…"
+          echo "⬇️  encoder_model_fp16.onnx (~168 MB, meilleure précision que la version quantifiée)…"
           wget --tries=5 --retry-connrefused --waitretry=10 \
                --timeout=120 --progress=bar:force \
-               "$BASE/onnx/encoder_model_quantized.onnx" -O whisper/whisper-encoder.onnx
+               "$BASE/onnx/encoder_model_fp16.onnx" -O whisper/whisper-encoder.onnx
 
           echo "⬇️  decoder_model_merged_quantized.onnx (~190 MB)…"
           wget --tries=5 --retry-connrefused --waitretry=10 \
